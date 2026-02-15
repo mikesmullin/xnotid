@@ -2,6 +2,7 @@ mod config;
 mod dbus_server;
 mod notification;
 mod store;
+mod tray;
 mod ui;
 
 use config::Config;
@@ -60,6 +61,8 @@ fn main() {
         }
         glib2::ControlFlow::Continue
     });
+
+    tray::start_tray_service(cmd_tx.clone());
 
     // Position popup window (hidden until first notification)
     ui.position_popup();

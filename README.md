@@ -92,49 +92,18 @@ Add a rule for xnotid windows (floating, no titlebar, no border, on-top, positio
 Adjust `screen = 1` and the `callback` geometry to place notifications on your preferred monitor/corner.
 This keeps popups non-focus-stealing while allowing notification-center keyboard shortcuts (like Esc to close).
 
-### 3. AwesomeWM — Notification center toggle button (`~/.config/awesome/rc.lua`)
+### 3. System tray behavior
 
-Add a bell icon widget to your wibar that toggles the notification center on click. Place this in the `-- {{{ Wibar` section, before the `awful.screen.connect_for_each_screen` block:
 
-```lua
--- Notification center toggle button
-local notif_toggle = wibox.widget {
-    {
-        markup = '<span font="12">🔔</span>',
-        widget = wibox.widget.textbox,
-    },
-    left = 4, right = 4,
-    widget = wibox.container.margin,
-}
-notif_toggle:buttons(gears.table.join(
-    awful.button({}, 1, function()
-        awful.spawn("gdbus call --session --dest org.xnotid.Control "
-            .. "--object-path /org/xnotid/Control "
-            .. "--method org.xnotid.Control.ToggleCenter")
-    end)
-))
-```
-
-Then add `notif_toggle` to the wibar layout (in the right-side widget list):
-
-```lua
-{ -- Right widgets
-    layout = wibox.layout.fixed.horizontal,
-    mykeyboardlayout,
-    wibox.widget.systray(),
-    notif_toggle,    -- <-- notification center toggle
-    mytextclock,
-    s.mylayoutbox,
-},
-```
-
-Clicking the 🔔 icon calls xnotid's D-Bus `ToggleCenter` method. You can also toggle it from the command line or a keybinding:
+You can also toggle it from the command line or a keybinding:
 
 ```sh
 gdbus call --session --dest org.xnotid.Control \
   --object-path /org/xnotid/Control \
   --method org.xnotid.Control.ToggleCenter
 ```
+- Tray icon is rendered at 15x15 (to fit small AwesomeWM systray heights).
+- Icon source is committed at `assets/bell.bmp` and embedded at compile time.
 
 ### 4. Picom — Disable shadows on xnotid windows (`~/.config/picom.conf`)
 
