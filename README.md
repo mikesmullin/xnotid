@@ -94,6 +94,7 @@ This keeps popups non-focus-stealing while allowing notification-center keyboard
 
 ### 3. System tray behavior
 
+- Left-clicking the xnotid tray icon toggles the notification center.
 
 You can also toggle it from the command line or a keybinding:
 
@@ -102,8 +103,6 @@ gdbus call --session --dest org.xnotid.Control \
   --object-path /org/xnotid/Control \
   --method org.xnotid.Control.ToggleCenter
 ```
-- Tray icon is rendered at 15x15 (to fit small AwesomeWM systray heights).
-- Icon source is committed at `assets/bell.bmp` and embedded at compile time.
 
 ### 4. Picom — Disable shadows on xnotid windows (`~/.config/picom.conf`)
 
@@ -143,46 +142,15 @@ cargo build --release
 sudo install -Dm755 target/release/xnotid /usr/local/bin/xnotid
 ```
 
-### 2. Autostart with AwesomeWM (Recommended)
+### 2. Systemd user service
 
-Add to `~/.config/awesome/rc.lua` (near the other `awful.spawn` calls):
-
-```lua
-awful.spawn.with_shell("pgrep -x xnotid >/dev/null || xnotid")
-```
-
-This starts xnotid if it's not already running, and avoids duplicates on AwesomeWM restart (`Mod4+Ctrl+r`).
-
-### 3. Systemd user service (alternative)
-
-Create `~/.config/systemd/user/xnotid.service`:
-
-```ini
-[Unit]
-Description=xnotid notification daemon
-PartOf=graphical-session.target
-After=graphical-session.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/xnotid
-Restart=on-failure
-RestartSec=3
-Environment=DISPLAY=:0
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=graphical-session.target
-```
-
-Then enable:
+Use the tracked service file at `xnotid.service` (repo root), then install it to your user systemd directory and enable it:
 
 ```sh
+install -Dm644 xnotid.service ~/.config/systemd/user/xnotid.service
 systemctl --user daemon-reload
 systemctl --user enable --now xnotid.service
 ```
-
-If using the systemd approach, do **not** also use the `awful.spawn.with_shell("pgrep -x xnotid >/dev/null || xnotid")` autostart line — pick one method.
 
 ### Updating
 
@@ -191,7 +159,7 @@ cd /path/to/xnotid/src
 git pull
 cargo build --release
 sudo install -Dm755 target/release/xnotid /usr/local/bin/xnotid
-# If using systemd:
+install -Dm644 xnotid.service ~/.config/systemd/user/xnotid.service
+systemctl --user daemon-reload
 systemctl --user restart xnotid
-# If using AwesomeWM autostart: restart AwesomeWM or kill & relaunch manually
 ```
