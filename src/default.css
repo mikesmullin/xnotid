@@ -1,0 +1,216 @@
+/* xnotid — default notification theme */
+
+/* ===== Popup Window ===== */
+#xnotid-popup-window {
+    background-color: transparent;
+}
+
+#popup-container {
+    padding: 4px;
+}
+
+/* ===== Notification Slot ===== */
+.notification {
+    background-color: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-height: 60px;
+    transition: opacity 200ms ease, margin 200ms ease;
+}
+
+.notification.low {
+    background-color: #2a2a2a;
+    border-color: #3a3a3a;
+}
+
+.notification.normal {
+    background-color: #2d2d2d;
+    border-color: #555;
+}
+
+.notification.critical {
+    background-color: #3d1a1a;
+    border-color: #a33;
+}
+
+.notification:hover {
+    background-color: #383838;
+}
+
+/* ===== Icon ===== */
+#notification-icon {
+    min-width: 48px;
+    min-height: 48px;
+    margin-right: 8px;
+    color: #ffffff;
+    -gtk-icon-style: symbolic;
+}
+
+/* ===== Text ===== */
+#notification-text {
+    padding: 2px 0;
+}
+
+.summary {
+    font-weight: bold;
+    font-size: 14px;
+    color: #eee;
+}
+
+.body {
+    font-size: 12px;
+    color: #ccc;
+}
+
+/* ===== Action Buttons ===== */
+.notification-action {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #444;
+    color: #ddd;
+    border: 1px solid #555;
+    min-height: 24px;
+}
+
+.notification-action:hover {
+    background: #555;
+}
+
+/* ===== Close Button ===== */
+.close-button {
+    font-size: 16px;
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 12px;
+    background-color: transparent;
+    color: #888;
+    border: none;
+    padding: 0;
+    transition: opacity 150ms ease;
+}
+
+.close-button:hover {
+    background-color: #a33;
+    color: #fff;
+}
+
+/* ===== Progress Bar ===== */
+#notification-progress {
+    margin-top: 4px;
+    min-height: 6px;
+}
+
+#notification-progress trough {
+    background-color: #444;
+    border-radius: 3px;
+    min-height: 6px;
+}
+
+#notification-progress progress {
+    background-color: #5599dd;
+    border-radius: 3px;
+    min-height: 6px;
+}
+
+/* ===== Notification Center ===== */
+#xnotid-center-window {
+    background-color: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 12px;
+}
+
+#center-main {
+    padding: 4px;
+}
+
+#center-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid #333;
+}
+
+#center-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #eee;
+}
+
+#dnd-button {
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: #444;
+    color: #ddd;
+    border: 1px solid #555;
+}
+
+#dnd-button:hover {
+    background: #555;
+}
+
+#dnd-button.active {
+    background: #c44;
+    color: #fff;
+    border-color: #a33;
+}
+
+#clear-all-button {
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: #444;
+    color: #ddd;
+    border: 1px solid #555;
+}
+
+#clear-all-button:hover {
+    background: #555;
+}
+
+/* ===== Center List ===== */
+#center-list {
+    padding: 4px 8px;
+}
+
+#center-empty {
+    padding: 32px;
+    font-size: 14px;
+    color: #666;
+}
+
+#center-scroll {
+    min-height: 200px;
+}
+
+/* ===== Popup Scroll ===== */
+#popup-scroll {
+    min-height: 0;
+}
+
+/* ===== Scrollbar (Apple-style thin) ===== */
+scrollbar {
+    background: transparent;
+}
+
+scrollbar slider {
+    min-width: 4px;
+    min-height: 20px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.3);
+    border: none;
+}
+
+scrollbar slider:hover {
+    background: rgba(255, 255, 255, 0.5);
+    min-width: 6px;
+}
+
+scrollbar.overlay-indicator slider {
+    min-width: 4px;
+}
+
+scrollbar trough {
+    background: transparent;
+    min-width: 8px;
+}
