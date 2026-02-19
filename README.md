@@ -2,6 +2,36 @@
 
 A custom X11 notification daemon built with Rust, GTK4, and zbus. Designed as a replacement for `naughty` (AwesomeWM's built-in notification system).
 
+## Notification Cards
+
+xnotid supports structured "card" notifications when the notification body is JSON with this envelope:
+
+```json
+{
+  "xnotid_card": "v1",
+  "type": "multiple-choice",
+  "question": "Which option should I use?",
+  "choices": [
+    { "id": "a", "label": "Option A" },
+    { "id": "b", "label": "Option B" }
+  ],
+  "allow_other": true
+}
+```
+
+Supported card types:
+
+- `multiple-choice`
+  - fields: `question`, `choices`, optional `allow_other`
+  - renders custom choice buttons; `allow_other` adds a text entry + submit
+  - selected choice emits `ActionInvoked(id, action_key)`
+- `permission`
+  - fields: `question`, optional `allow_label` (default: `Allow`)
+  - renders a single allow button that emits `ActionInvoked(id, "allow")`
+
+If a card is detected, xnotid treats the notification as acknowledge-to-dismiss.
+For normal notifications, existing body/actions behavior is unchanged.
+
 ## Building
 
 ```sh

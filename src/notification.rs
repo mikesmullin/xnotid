@@ -4,6 +4,40 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use zbus::zvariant::{OwnedValue, Value};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardChoice {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum NotificationCard {
+    MultipleChoice {
+        question: String,
+        choices: Vec<CardChoice>,
+        #[serde(default)]
+        allow_other: bool,
+    },
+    Permission {
+        question: String,
+        #[serde(default = "default_allow_label")]
+        allow_label: String,
+    },
+}
+
+fn default_allow_label() -> String {
+    "Allow".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct CardEnvelope {
+    #[serde(rename = "xnotid_card")]
+    marker: String,
+    #[serde(flatten)]
+    card: NotificationCard,
+}
+
 /// Urgency levels per the freedesktop notification spec
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Urgency {
@@ -94,6 +128,8 @@ pub struct Notification {
     pub progress: Option<i32>,
     /// Per-notification CSS class override
     pub css_class: Option<String>,
+    /// Optional structured card payload parsed from body JSON
+    pub card: Option<NotificationCard>,
 }
 
 impl Notification {
@@ -164,6 +200,8 @@ impl Notification {
         hints: HashMap<String, OwnedValue>,
         expire_timeout: i32,
     ) -> Self {
+        let card = Self::parse_card_body(&body);
+
         // Parse actions: they come as [key, label, key, label, ...]
         let actions: Vec<Action> = actions_raw
             .chunks(2)
@@ -190,6 +228,8 @@ impl Notification {
         // Parse acknowledge-to-dismiss from hints
         let acknowledge_to_dismiss = Self::get_hint_bool(&hints, "x-acknowledge")
             .unwrap_or(false);
+
+        let acknowledge_to_dismiss = acknowledge_to_dismiss || card.is_some();
 
         // Parse desktop entry
         let desktop_entry = Self::get_hint_string(&hints, "desktop-entry");
@@ -243,7 +283,16 @@ impl Notification {
             transient,
             progress,
             css_class,
+            card,
         }
+    }
+
+    fn parse_card_body(body: &str) -> Option<NotificationCard> {
+        let parsed = serde_json::from_str::<CardEnvelope>(body).ok()?;
+        if parsed.marker != "v1" {
+            return None;
+        }
+        Some(parsed.card)
     }
 
     fn parse_image(

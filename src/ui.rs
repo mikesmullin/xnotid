@@ -1,15 +1,16 @@
 use crate::config::Config;
 use crate::dbus_server::DbusSignal;
-use crate::notification::{CloseReason, ImageData, Notification, Urgency};
+use crate::notification::{CloseReason, ImageData, Notification, NotificationCard, Urgency};
 use crate::store::SharedStore;
 use gdk4::gdk_pixbuf::Pixbuf;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, CssProvider, EventControllerKey, GestureClick, Image, Label,
-    Orientation, Revealer, RevealerTransitionType, ScrolledWindow, Window,
+    Align, Box as GtkBox, Button, CssProvider, Entry, EventControllerKey, GestureClick, Image, Label,
+    Orientation, Revealer, RevealerTransitionType, ScrolledWindow, Separator, Window,
 };
+use serde_json::json;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 /// Manages the popup notification window and the notification center panel.
@@ -253,10 +254,18 @@ impl Ui {
             log::info!("Wrote default CSS to {:?}", css_path);
         }
 
-        // Always load CSS from disk so edits take effect on restart
+        // Always start from built-in defaults so newly introduced selectors
+        // exist even if user style.css is from an older version.
         let provider = CssProvider::new();
-        provider.load_from_path(css_path.to_str().unwrap_or_default());
-        log::info!("Loaded CSS from {:?}", css_path);
+        let mut css = include_str!("default.css").to_string();
+        if let Ok(user_css) = std::fs::read_to_string(&css_path) {
+            css.push_str("\n\n/* --- user overrides --- */\n");
+            css.push_str(&user_css);
+            log::info!("Loaded default CSS + user CSS from {:?}", css_path);
+        } else {
+            log::info!("Loaded default CSS only");
+        }
+        provider.load_from_string(&css);
 
         gtk4::style_context_add_provider_for_display(
             &gdk4::Display::default().expect("No display"),
@@ -474,57 +483,49 @@ impl Ui {
         summary.set_max_width_chars(40);
         text_box.append(&summary);
 
-        // Body
         let body_is_truncated = Rc::new(RefCell::new(false));
-        if !noti.body.is_empty() {
-            let body = Label::new(Some(&noti.body));
-            body.set_widget_name("notification-body");
-            body.set_css_classes(&["body"]);
-            body.set_halign(Align::Start);
-            body.set_wrap(true);
-            body.set_max_width_chars(50);
-            body.set_use_markup(true);
+        if let Some(card) = &noti.card {
+            let card_widget = self.build_card_widget(noti, card, is_popup);
+            text_box.append(&card_widget);
+        } else {
+            if !noti.body.is_empty() {
+                let body = Label::new(Some(&noti.body));
+                body.set_widget_name("notification-body");
+                body.set_css_classes(&["body"]);
+                body.set_halign(Align::Start);
+                body.set_wrap(true);
+                body.set_max_width_chars(50);
+                body.set_use_markup(true);
 
-            if is_popup {
-                body.set_lines(2);
-                body.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-                // Check if text would be truncated (heuristic: body > ~100 chars)
-                if noti.body.len() > 100 {
-                    *body_is_truncated.borrow_mut() = true;
+                if is_popup {
+                    body.set_lines(2);
+                    body.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    if noti.body.len() > 100 {
+                        *body_is_truncated.borrow_mut() = true;
+                    }
                 }
+                text_box.append(&body);
             }
-            text_box.append(&body);
-        }
 
-        // Action buttons
-        if !noti.actions.is_empty() {
-            let actions_box = GtkBox::new(Orientation::Horizontal, 4);
-            actions_box.set_widget_name("notification-actions");
-            actions_box.set_margin_top(4);
+            if !noti.actions.is_empty() {
+                let actions_box = GtkBox::new(Orientation::Horizontal, 4);
+                actions_box.set_widget_name("notification-actions");
+                actions_box.set_margin_top(4);
 
-            for action in &noti.actions {
-                let btn = Button::with_label(&action.label);
-                btn.set_css_classes(&["notification-action"]);
-                let store = self.store.clone();
-                let signal_tx = self.signal_tx.clone();
-                let action_key = action.key.clone();
-                let noti_id = noti.id;
-                btn.connect_clicked(move |_| {
-                    log::info!("Action invoked: id={} key={}", noti_id, action_key);
-                    // Emit D-Bus ActionInvoked signal
-                    let _ = signal_tx.send(DbusSignal::ActionInvoked {
-                        id: noti_id,
-                        action_key: action_key.clone(),
+                for action in &noti.actions {
+                    let btn = Button::with_label(&action.label);
+                    btn.set_css_classes(&["notification-action"]);
+                    let store = self.store.clone();
+                    let signal_tx = self.signal_tx.clone();
+                    let action_key = action.key.clone();
+                    let noti_id = noti.id;
+                    btn.connect_clicked(move |_| {
+                        Self::invoke_action(&store, &signal_tx, noti_id, action_key.clone());
                     });
-                    // Dismiss the notification after action
-                    let mut s = store.lock().unwrap();
-                    s.log_action(noti_id, &action_key);
-                    s.close(noti_id, CloseReason::Dismissed);
-                    s.notify_change();
-                });
-                actions_box.append(&btn);
+                    actions_box.append(&btn);
+                }
+                text_box.append(&actions_box);
             }
-            text_box.append(&actions_box);
         }
 
         // Progress bar
@@ -674,6 +675,383 @@ impl Ui {
         }
 
         slot
+    }
+
+    fn invoke_action(
+        store: &SharedStore,
+        signal_tx: &std::sync::mpsc::Sender<DbusSignal>,
+        noti_id: u32,
+        action_key: String,
+    ) {
+        log::info!("Action invoked: id={} key={}", noti_id, action_key);
+        let _ = signal_tx.send(DbusSignal::ActionInvoked {
+            id: noti_id,
+            action_key: action_key.clone(),
+        });
+        let mut s = store.lock().unwrap();
+        s.log_action(noti_id, &action_key);
+        s.close(noti_id, CloseReason::Dismissed);
+        s.notify_change();
+    }
+
+    fn build_card_widget(&self, noti: &Notification, card: &NotificationCard, is_popup: bool) -> GtkBox {
+        let container = GtkBox::new(Orientation::Vertical, 6);
+        container.set_widget_name("notification-card");
+        container.set_margin_top(4);
+
+        let question = match card {
+            NotificationCard::MultipleChoice { question, .. } => question,
+            NotificationCard::Permission { question, .. } => question,
+        };
+
+        let question_label = Label::new(Some(question));
+        question_label.set_widget_name("notification-card-question");
+        question_label.set_halign(Align::Start);
+        question_label.set_hexpand(true);
+        question_label.set_wrap(true);
+        container.append(&question_label);
+        container.append(&Separator::new(Orientation::Horizontal));
+
+        match card {
+            NotificationCard::MultipleChoice {
+                choices,
+                allow_other,
+                ..
+            } => {
+                let choices_box = GtkBox::new(Orientation::Vertical, 4);
+                choices_box.set_widget_name("notification-actions");
+
+                let selected_ids = Rc::new(RefCell::new(HashSet::<String>::new()));
+                let option_rows = Rc::new(RefCell::new(Vec::<(String, GtkBox, Label)>::new()));
+                let mut choice_label_map = HashMap::<String, String>::new();
+
+                for (index, choice) in choices.iter().enumerate() {
+                    let row = GtkBox::new(Orientation::Horizontal, 8);
+                    row.set_widget_name("notification-card-option");
+                    row.set_css_classes(&["notification-card-option"]);
+                    row.set_margin_top(1);
+                    row.set_margin_bottom(1);
+
+                    let badge = Label::new(Some(&(index + 1).to_string()));
+                    badge.set_widget_name("notification-card-index");
+                    badge.set_css_classes(&["notification-card-index"]);
+
+                    let text = Label::new(Some(&choice.label));
+                    text.set_halign(Align::Start);
+                    text.set_hexpand(true);
+                    text.set_wrap(true);
+
+                    let check = Label::new(Some(""));
+                    check.set_widget_name("notification-card-check");
+                    check.set_halign(Align::End);
+
+                    row.append(&badge);
+                    row.append(&text);
+                    row.append(&check);
+
+                    let selected_click = selected_ids.clone();
+                    let choice_id = choice.id.clone();
+                    let row_click = row.clone();
+                    let check_click = check.clone();
+                    let click = GestureClick::new();
+                    click.connect_released(move |_, _, _, _| {
+                        Self::toggle_choice_row(&selected_click, &choice_id, &row_click, &check_click);
+                    });
+                    row.add_controller(click);
+
+                    option_rows
+                        .borrow_mut()
+                        .push((choice.id.clone(), row.clone(), check.clone()));
+                    choice_label_map.insert(choice.id.clone(), choice.label.clone());
+                    choices_box.append(&row);
+                }
+
+                let other_entry = if *allow_other {
+                    let other_idx = choices.len() + 1;
+                    let other_row = GtkBox::new(Orientation::Horizontal, 8);
+                    other_row.set_widget_name("notification-card-option");
+                    other_row.set_css_classes(&["notification-card-option"]);
+
+                    let prefix = Label::new(Some(&other_idx.to_string()));
+                    prefix.set_widget_name("notification-card-index");
+                    prefix.set_css_classes(&["notification-card-index"]);
+                    prefix.set_halign(Align::Start);
+
+                    let entry = Entry::new();
+                    entry.set_widget_name("notification-card-other-entry");
+                    entry.set_placeholder_text(Some("Enter custom answer"));
+                    entry.set_hexpand(true);
+                    entry.set_can_focus(true);
+
+                    let check = Label::new(Some(""));
+                    check.set_widget_name("notification-card-check");
+
+                    other_row.append(&prefix);
+                    other_row.append(&entry);
+                    other_row.append(&check);
+
+                    let other_key = "other".to_string();
+                    let selected_focus = selected_ids.clone();
+                    let row_focus = other_row.clone();
+                    let check_focus = check.clone();
+                    let key_focus = other_key.clone();
+                    entry.connect_has_focus_notify(move |entry_widget| {
+                        if entry_widget.has_focus() {
+                            Self::set_choice_row_selected(
+                                &selected_focus,
+                                &key_focus,
+                                &row_focus,
+                                &check_focus,
+                                true,
+                            );
+                        }
+                    });
+
+                    let selected_change = selected_ids.clone();
+                    let row_change = other_row.clone();
+                    let check_change = check.clone();
+                    let key_change = other_key.clone();
+                    entry.connect_changed(move |entry_widget| {
+                        let has_text = !entry_widget.text().trim().is_empty();
+                        Self::set_choice_row_selected(
+                            &selected_change,
+                            &key_change,
+                            &row_change,
+                            &check_change,
+                            has_text,
+                        );
+                    });
+
+                    let entry_press_flag = Rc::new(RefCell::new(false));
+                    let press_flag_for_entry = entry_press_flag.clone();
+                    let entry_click = GestureClick::new();
+                    entry_click.connect_pressed(move |_, _, _, _| {
+                        *press_flag_for_entry.borrow_mut() = true;
+                    });
+                    entry.add_controller(entry_click);
+
+                    let selected_click = selected_ids.clone();
+                    let row_click = other_row.clone();
+                    let check_click = check.clone();
+                    let key_click = other_key.clone();
+                    let press_flag_for_row = entry_press_flag.clone();
+                    let click = GestureClick::new();
+                    click.connect_released(move |_, _, _, _| {
+                        let from_entry = {
+                            let mut flag = press_flag_for_row.borrow_mut();
+                            let value = *flag;
+                            *flag = false;
+                            value
+                        };
+
+                        if from_entry {
+                            Self::set_choice_row_selected(
+                                &selected_click,
+                                &key_click,
+                                &row_click,
+                                &check_click,
+                                true,
+                            );
+                        } else {
+                            Self::set_choice_row_selected(
+                                &selected_click,
+                                &key_click,
+                                &row_click,
+                                &check_click,
+                                false,
+                            );
+                        }
+                    });
+                    other_row.add_controller(click);
+
+                    option_rows
+                        .borrow_mut()
+                        .push(("other".to_string(), other_row.clone(), check.clone()));
+                    choices_box.append(&other_row);
+
+                    if is_popup {
+                        let popup_window = self.popup_window.clone();
+                        glib2::timeout_add_local_once(std::time::Duration::from_millis(20), move || {
+                            popup_window.set_focusable(true);
+                            popup_window.present();
+                        });
+                    }
+
+                    Some(entry)
+                } else {
+                    None
+                };
+
+                container.append(&choices_box);
+                container.append(&Separator::new(Orientation::Horizontal));
+
+                let submit_row = GtkBox::new(Orientation::Horizontal, 0);
+                submit_row.set_halign(Align::End);
+
+                let submit_btn = Button::with_label("Submit");
+                submit_btn.set_css_classes(&["notification-action", "notification-submit"]);
+
+                let store_submit = self.store.clone();
+                let signal_submit = self.signal_tx.clone();
+                let selected_submit = selected_ids.clone();
+                let options_submit = option_rows.clone();
+                let labels_submit = Rc::new(choice_label_map.clone());
+                let other_submit = other_entry.clone();
+                let noti_id = noti.id;
+
+                submit_btn.connect_clicked(move |_| {
+                    let selected_now = selected_submit.borrow();
+                    let options_now = options_submit.borrow();
+
+                    let mut selected = Vec::new();
+                    for (id, _, _) in options_now.iter() {
+                        if !selected_now.contains(id) {
+                            continue;
+                        }
+                        let label = labels_submit
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| id.clone());
+                        selected.push(json!({"id": id, "label": label}));
+                    }
+
+                    let other_text = other_submit
+                        .as_ref()
+                        .map(|entry| entry.text().trim().to_string())
+                        .unwrap_or_default();
+
+                    let payload = json!({
+                        "type": "multiple-choice",
+                        "selected": selected,
+                        "other": if other_text.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(other_text) }
+                    });
+
+                    Self::invoke_action(&store_submit, &signal_submit, noti_id, payload.to_string());
+                });
+
+                if let Some(entry) = other_entry.clone() {
+                    let store_enter = self.store.clone();
+                    let signal_enter = self.signal_tx.clone();
+                    let selected_enter = selected_ids.clone();
+                    let options_enter = option_rows.clone();
+                    let labels_enter = Rc::new(choice_label_map);
+                    let noti_id_enter = noti.id;
+                    let other_entry_for_enter = entry.clone();
+                    entry.connect_activate(move |_| {
+                        let selected_now = selected_enter.borrow();
+                        let options_now = options_enter.borrow();
+
+                        let mut selected = Vec::new();
+                        for (id, _, _) in options_now.iter() {
+                            if !selected_now.contains(id) {
+                                continue;
+                            }
+                            let label = labels_enter
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| id.clone());
+                            selected.push(json!({"id": id, "label": label}));
+                        }
+
+                        let other_text = other_entry_for_enter.text().trim().to_string();
+                        let payload = json!({
+                            "type": "multiple-choice",
+                            "selected": selected,
+                            "other": if other_text.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(other_text) }
+                        });
+                        Self::invoke_action(&store_enter, &signal_enter, noti_id_enter, payload.to_string());
+                    });
+                }
+
+                let options_key = option_rows.clone();
+                let selected_key = selected_ids.clone();
+                let other_entry_key = other_entry.clone();
+                let key_controller = EventControllerKey::new();
+                key_controller.connect_key_pressed(move |_, key, _, _| {
+                    if let Some(entry) = other_entry_key.as_ref() {
+                        if entry.has_focus() {
+                            return glib2::Propagation::Proceed;
+                        }
+                    }
+
+                    if let Some(index) = Self::choice_hotkey_index(key) {
+                        let rows = options_key.borrow();
+                        if let Some((id, row, check)) = rows.get(index) {
+                            Self::toggle_choice_row(&selected_key, id, row, check);
+                            return glib2::Propagation::Stop;
+                        }
+                    }
+                    glib2::Propagation::Proceed
+                });
+                container.add_controller(key_controller);
+
+                submit_row.append(&submit_btn);
+                container.append(&submit_row);
+            }
+            NotificationCard::Permission { allow_label, .. } => {
+                let actions_box = GtkBox::new(Orientation::Horizontal, 4);
+                actions_box.set_widget_name("notification-actions");
+                let btn = Button::with_label(allow_label);
+                btn.set_css_classes(&["notification-action", "notification-submit"]);
+                let store = self.store.clone();
+                let signal_tx = self.signal_tx.clone();
+                let noti_id = noti.id;
+                btn.connect_clicked(move |_| {
+                    Self::invoke_action(&store, &signal_tx, noti_id, "allow".to_string());
+                });
+                actions_box.append(&btn);
+                container.append(&actions_box);
+            }
+        }
+
+        container
+    }
+
+    fn toggle_choice_row(
+        selected_ids: &Rc<RefCell<HashSet<String>>>,
+        choice_id: &str,
+        row: &GtkBox,
+        check: &Label,
+    ) {
+        let is_selected = {
+            let selected = selected_ids.borrow();
+            !selected.contains(choice_id)
+        };
+        Self::set_choice_row_selected(selected_ids, choice_id, row, check, is_selected);
+    }
+
+    fn set_choice_row_selected(
+        selected_ids: &Rc<RefCell<HashSet<String>>>,
+        choice_id: &str,
+        row: &GtkBox,
+        check: &Label,
+        selected: bool,
+    ) {
+        let mut selected_set = selected_ids.borrow_mut();
+        if selected {
+            selected_set.insert(choice_id.to_string());
+            row.add_css_class("selected");
+            check.set_text("✓");
+        } else {
+            selected_set.remove(choice_id);
+            row.remove_css_class("selected");
+            check.set_text("");
+        }
+    }
+
+    fn choice_hotkey_index(key: gdk4::Key) -> Option<usize> {
+        match key {
+            gdk4::Key::_1 | gdk4::Key::KP_1 => Some(0),
+            gdk4::Key::_2 | gdk4::Key::KP_2 => Some(1),
+            gdk4::Key::_3 | gdk4::Key::KP_3 => Some(2),
+            gdk4::Key::_4 | gdk4::Key::KP_4 => Some(3),
+            gdk4::Key::_5 | gdk4::Key::KP_5 => Some(4),
+            gdk4::Key::_6 | gdk4::Key::KP_6 => Some(5),
+            gdk4::Key::_7 | gdk4::Key::KP_7 => Some(6),
+            gdk4::Key::_8 | gdk4::Key::KP_8 => Some(7),
+            gdk4::Key::_9 | gdk4::Key::KP_9 => Some(8),
+            _ => None,
+        }
     }
 
     fn dismiss_popup_static(
