@@ -1,5 +1,6 @@
 [Unit]
 Description=xnotid notification daemon
+Wants=graphical-session.target
 PartOf=graphical-session.target
 After=graphical-session.target
 
