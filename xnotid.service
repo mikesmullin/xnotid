@@ -3,13 +3,14 @@ Description=xnotid notification daemon
 Wants=graphical-session.target
 PartOf=graphical-session.target
 After=graphical-session.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+ExecStartPre=/usr/bin/sh -c 'while ! /usr/bin/xset q >/dev/null 2>&1; do sleep 1; done; while ! /usr/bin/xprop -root _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1; do sleep 1; done'
 ExecStart=/usr/local/bin/xnotid
 Restart=on-failure
 RestartSec=3
-Environment=DISPLAY=:0
 Environment=RUST_LOG=info
 
 [Install]
